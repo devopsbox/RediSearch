@@ -47,7 +47,7 @@ $(RMUTIL):
 	$(CC) -I. $(CFLAGS) $(SHOBJ_CFLAGS) -fPIC -c $< -o $@
 
 module.so: $(MODULE)
-	$(LD) -o $@ $(VARINT) $(INDEX) $(REDIS) $(UTILOBJS) $(RMUTILOBJS) $(SHOBJ_LDFLAGS) $(LIBS) -lc -lm -Bsymbolic
+	$(LD) -o $@ $(VARINT) $(INDEX) $(REDIS) $(UTILOBJS) $(RMUTILOBJS) $(SHOBJ_LDFLAGS) $(LIBS) -lc -lm -Bsymbolic -lprofiler
 
 clean:
 	find . -type f -name '*.o' -delete -print

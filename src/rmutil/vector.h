@@ -37,6 +37,12 @@ int __vector_PutPtr(Vector *v, int pos, void *elem);
 */
 int Vector_Get(Vector *v, int pos, void *ptr);
 
+/* 
+* Get the element at the top of the vector (rightmost) and remove it from the vector.
+* Notice that this doesn't actually free the element if it's a pointer.
+*/
+int Vector_Pop(Vector *v, void *ptr);
+
 //#define Vector_Getx(v, pos, ptr) pos < v->cap ? 1 : 0; *ptr =
 //*(typeof(ptr))(v->data + v->elemSize*pos)
 

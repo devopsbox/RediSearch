@@ -12,6 +12,13 @@ int __vector_PushPtr(Vector *v, void *elem) {
     return v->top;
 }
 
+int Vector_Pop(Vector *v, void *ptr) {
+    if (Vector_Get(v, v->top - 1, ptr)) {
+        v->top--;
+        return 1;
+    }
+    return 0;
+}
 
 int Vector_Get(Vector *v, int pos, void *ptr) {
     // return 0 if pos is out of bounds
