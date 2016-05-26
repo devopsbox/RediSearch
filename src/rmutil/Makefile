@@ -19,5 +19,10 @@ librmutil.a: $(OBJS)
 test_vector: test_vector.o vector.o
 	$(CC) -Wall -o test_vector vector.o test_vector.o -lc -O0
 	@(sh -c ./test_vector)
+	
+test_tree: srtree.o vector.o
+	$(CC) -Wall -o test_tree vector.o srtree.o -lc -O0
+	@(sh -c ./test_tree)
+
 
 	
