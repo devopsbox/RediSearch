@@ -2,8 +2,9 @@
 #include "vector.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
-#define SR_MAX_LEAF_SIZE 500
+#define SR_MAX_LEAF_SIZE 1000
 
 typedef struct docNode {
   t_docId docId;
@@ -30,7 +31,7 @@ DocNodeIterator *DocNodeIterator_Next(DocNodeIterator *i);
 DocNodeIterator *newDocNodeIterator(DocNode *n, DocNodeIterator *parent) {
   DocNodeIterator *ret = malloc(sizeof(DocNodeIterator));
   ret->node = n;
-  ret->parent = NULL;
+  ret->parent = parent;
   ret->state = StateNew;
   return ret;
 }
@@ -143,14 +144,16 @@ Leaf *newLeaf(DocNode *docs, int size, float min, float max) {
 
     return ret;
 }
+
+
 void Leaf_Split(Leaf *l, Leaf **left, Leaf **right) {
   float split = (l->min + l->max) / 2;
 
-  DocNode *ld, *rd;
+  DocNode *ld = NULL, *rd = NULL;
   DocNode_Split(l->doctree, split, &ld, &rd);
-
-  *left = newLeaf(ld, ld->size, l->min, split);
-  *right = newLeaf(rd, rd->size, split, l->max);
+  
+  *left = newLeaf(ld, ld ? ld->size : 0, l->min, split);
+  *right = newLeaf(rd, rd ? rd->size : 0, split, l->max);
   
 }
 
@@ -186,9 +189,9 @@ void ScoreNode_Add(ScoreNode *n, t_docId docId, float score) {
   Leaf_Add(n->leaf, docId, score);
 
   if (n->leaf->distinct > SR_MAX_LEAF_SIZE) {
-    // fmt.Println("Splitting node with leaf %s", *n.leaf)
+    //printf("Splitting node with leaf %p\n", n->leaf);
 
-    Leaf *ll, *rl;
+    Leaf *ll = NULL, *rl = NULL;
     Leaf_Split(n->leaf, &ll, &rl);
 
     free(n->leaf);
@@ -205,7 +208,7 @@ Vector *ScoreNode_FindRange(ScoreNode *n, float min, float max) {
 
   ScoreNode *vmin = n, *vmax = n;
 
-  while (vmin == vmax) {
+  while (vmin == vmax && vmin) {
     vmin = min < vmin->score ? vmin->left : vmin->right;
     vmax = max < vmax->score ? vmax->left : vmax->right;
   }
@@ -227,8 +230,8 @@ Vector *ScoreNode_FindRange(ScoreNode *n, float min, float max) {
     vmax = max < vmax->score ? vmax->left : vmax->right;
   }
 
-  Vector_Push(leaves, vmin->leaf);
-  Vector_Push(leaves, vmax->leaf);
+  if (vmin) Vector_Push(leaves, vmin->leaf);
+  if (vmax) Vector_Push(leaves, vmax->leaf);
 
   while (Vector_Size(stack)) {
     ScoreNode *n;
@@ -252,13 +255,18 @@ int main(int argc, char **argv) {
 
     ScoreNode *root = newScoreNode(newLeaf(newDocNode(0,0), 0, 0, 0));
     
-    int N = 1000;
+    int N = 1000000;
     for (int i = 0; i < N; i++) {
-        ScoreNode_Add(root, rand() % N, (float)(rand()%N));
+        ScoreNode_Add(root, i, (float)(rand()%100000));
     }
      
-    
-    Vector *leaves = ScoreNode_FindRange(root, 100, 200);
+    	int c = 0;
+  
+    struct timespec start_time, end_time;
+  
+    clock_gettime(CLOCK_REALTIME, &start_time);
+
+    Vector *leaves = ScoreNode_FindRange(root, 100, 30000);
     int n = (int)Vector_Size(leaves);
     DocNodeIterator *iters[n];
     for (int i = 0; i <n; i++) {
@@ -267,7 +275,10 @@ int main(int argc, char **argv) {
         iters[i] = DocNode_Iterate(l->doctree);
     }
 
-	int c = 0;
+
+    
+    
+    
 	while (1) {
         DocNodeIterator *min = NULL;
 	    int minIdx = -1;
@@ -284,12 +295,18 @@ int main(int argc, char **argv) {
         // no more iterators to read
         if (!min) break;
         
-        printf("%d\n", min->node->docId);
+        //printf("%d => %f\n", min->node->docId, min->node->score);
         
                 // fmt.Println(min.node.docId, min.node.score)
         iters[minIdx] = DocNodeIterator_Next(min);
         c++;
       }
-      printf("got %d nodes\n", c);
+      
+      clock_gettime(CLOCK_REALTIME, &end_time);
+     long diffInNanos = end_time.tv_nsec - start_time.tv_nsec;
+    
+
+       printf("got %d nodes, Time elapsed: %ldnano\n", c, diffInNanos);
+      //printf("got %d nodes\n", c);
   
 }

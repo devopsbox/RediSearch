@@ -21,7 +21,7 @@ test_vector: test_vector.o vector.o
 	@(sh -c ./test_vector)
 	
 test_tree: srtree.o vector.o
-	$(CC) -Wall -o test_tree vector.o srtree.o -lc -O0
+	$(CC) -Wall -o test_tree vector.o srtree.o -lc -O3
 	@(sh -c ./test_tree)
 
 
