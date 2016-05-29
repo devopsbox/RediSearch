@@ -1,48 +1,70 @@
 #include "srtree.h"
 
-DocNode *DocNode_Iterate(DocNode *n) {
-  return DocNode_Next(n);
+
+DocTreeIterator *DocTree_Iterate(DocNode *n) {
+  DocTreeIterator *ret = malloc(sizeof(DocTreeIterator));
+  ret->cap = 8;
+  ret->stack = calloc(ret->cap, sizeof(doctreeIterState));
+  ret->stack[0].current = n;
+  ret->stack[0].state = 0;
+  ret->top = 1;
+   
+  return ret;
 }
 
-DocNode *DocNode_Next(DocNode *n) {
-  
-  // printf("next %p: state %d, docId %d left %p right %p parent %p\n",  n, n->state, n->docId, n->left, n->right, n->parent);
+void dti_push(DocTreeIterator*dti, DocNode *n) {
+  if (dti->top >= dti->cap) {
+    dti->cap *= 2;
+    dti->stack = realloc(dti->stack, dti->cap*sizeof(doctreeIterState));
+  }
+  dti->stack[dti->top].current = n;
+  dti->stack[dti->top].state = 0;
+  dti->top++;
    
+}
+DocNode *DocTreeIterator_Next(DocTreeIterator *it) {
+   if (it->top == 0) return NULL;
    
-  if (n->state == 0) {
-    if (!n->left) n->state++;
-    
-    while (n->left) {
-      n->state++;
-      n = n->left;
-    }
-  }
-
-  if (n->state == 1) {
-    n->state++;
-    return n;
-  }
-
-  if (n->state == 2) {
-    n->state++;
-    if (n->right) {
-      return DocNode_Next(n->right);
-    }
-  }
-  
-  n->state = 0;
-  return n->parent ? DocNode_Next(n->parent) : NULL;
+   doctreeIterState *st = &it->stack[it->top-1];
+   printf("next %p, top %d cap %d\n",it, it->top, it->cap);
+   switch (st->state) {
+     case 0: {
+      st->state++;
+      if (st->current->left) {
+        dti_push(it, st->current->left);
+        return DocTreeIterator_Next(it);
+      } 
+     }
+     case 1:
+      st->state++;
+      return st->current;
+     
+     case 2:
+      st->state++;
+      if (st->current->right) {
+        dti_push(it, st->current->right);
+        return DocTreeIterator_Next(it);
+      }
+      
+     case 3: 
+      // pop
+      it->top--;
+      return DocTreeIterator_Next(it);
+            
+   }
+   
+   return NULL;
 }
 
-DocNode *newDocNode(t_docId docId, float score, DocNode *parent) {
+DocNode *newDocNode(t_docId docId, float score) {
+  //printf("created new docNode %d, son of %d\n", docId, parent ? parent->docId : -1);
   DocNode *ret = malloc(sizeof(DocNode));
   ret->docId = docId;
   ret->score = score;
   ret->left = NULL;
   ret->size = 1;
   ret->right = NULL;
-  ret->parent = parent;
-  ret->state = 0;
+  
   return ret;
 }
 
@@ -51,18 +73,20 @@ void DocNode_Add(DocNode *n, t_docId docId, float score) {
   n->size++;
   while (current != NULL) {
     if (docId == current->docId) {
+      //printf("%d already in the db", docId);
       return;
     }
 
     if (docId < current->docId) {
       if (current->left == NULL) {
-        current->left = newDocNode(docId, score, current);
+        
+        current->left = newDocNode(docId, score);
         return;
       }
       current = current->left;
     } else {
       if (current->right == NULL) {
-        current->right = newDocNode(docId, score, current);
+        current->right = newDocNode(docId, score);
         return;
       }
       current = current->right;
@@ -72,25 +96,31 @@ void DocNode_Add(DocNode *n, t_docId docId, float score) {
 
 void DocNode_Split(DocNode *n, float splitPoint, DocNode **left,
                    DocNode **right) {
-  DocNode *current = DocNode_Iterate(n);
+  DocTreeIterator *it = DocTree_Iterate(n);
+  DocNode *current = DocTreeIterator_Next(it);
   while (current) {
     
     if (current->score < splitPoint) {
       if (*left == NULL) {
-        *left = newDocNode(current->docId, current->score, NULL);
+        
+        *left = newDocNode(current->docId, current->score);
       } else {
         DocNode_Add(*left, current->docId, current->score);
       }
     } else {
       if (*right == NULL) {
-        *right = newDocNode(current->docId, current->score, NULL);
+        *right = newDocNode(current->docId, current->score);
       } else {
         DocNode_Add(*right, current->docId, current->score);
       }
     }
     
-    current = DocNode_Next(current);
+    
+    current = DocTreeIterator_Next(it);
   };
+  
+  free(it->stack);
+  free(it);
   
 }
 
@@ -140,11 +170,11 @@ void ScoreNode_Add(ScoreNode *n, t_docId docId, float score) {
   while (n && !n->leaf) {
     n = score < n->score ? n->left : n->right;
   }
-  //printf("Adding to leaf %p\n", n->leaf);
+  ////printf("Adding to leaf %f..%f\n", n->leaf->min, n->leaf->max);
   Leaf_Add(n->leaf, docId, score);
 
   if (n->leaf->distinct > SR_MAX_LEAF_SIZE) {
-//     printf("Splitting node with leaf %p\n", n->leaf);
+     //printf("Splitting node with leaf %p\n", n->leaf);
 
     Leaf *ll = NULL, *rl = NULL;
     Leaf_Split(n->leaf, &ll, &rl);
@@ -207,15 +237,15 @@ Vector *ScoreNode_FindRange(ScoreNode *n, float min, float max) {
 
   Vector_Free(stack);
 
-  printf("found %d leaves\n", Vector_Size(leaves));
+  //printf("found %d leaves\n", Vector_Size(leaves));
   return leaves;
 }
 
 
 static int cmpDocIds(const void *e1, const void *e2, const void *udata) {
-  const DocNode *n1 = e1, *n2 = e2;
+  const DocTreeIterator *d1 = e1, *d2 = e2;
 
-  return n1->docId - n2->docId;
+  return d1->stack[d1->top-1].current->docId - d2->stack[d2->top-1].current->docId;
   
 }
 
@@ -230,80 +260,96 @@ SortedRangeIterator Iterate(ScoreNode *root, float min, float max) {
   Leaf *l;
   for (size_t i = 0; i < n; i++) {
     Vector_Get(leaves, i, &l);
-    DocNode *it = DocNode_Iterate(l->doctree);
+    //printf("found leaf %f...%f", l->min, l->max);
+    DocTreeIterator *it = DocTree_Iterate(l->doctree);
     if (it) {
-      heap_offer(&pq, DocNode_Iterate(l->doctree));
+      //printf("adding it @%d\n", it->docId);
+      heap_offer(&pq, it);
     }
   }
   
   Vector_Free(leaves);
-  return (SortedRangeIterator){pq, min, max};
+  SortedRangeIterator ret;
+  ret.max = max;
+  ret.min = min;
+  ret.pq = pq;
+  return ret;
 }
 
 DocNode *SortedRangeIterator_Next(SortedRangeIterator *it) {
-  
+  //printf("@Next!n\n");
   heap_t *pq = it->pq;
   if (heap_count(pq) == 0) {
+    printf("heap empty");
     return NULL;
   }
-  DocNode *minit = heap_poll(pq);
-  if (minit == NULL) {
+  DocTreeIterator *minit = heap_poll(pq);
+  if (minit == NULL|| heap_count(pq) == 0) {
+    //printf("no min!\n");
     return NULL;
   }
-    
-  DocNode *next = minit;
-  do {
-    next = DocNode_Next(next);
-    if (next && next->score >= it->min && next->score <= it->max) {
-      break;
-    }
-  } while (next);
   
-  if (next) {
+  DocNode *minnode = minit->stack[minit->top-1].current;
+  //printf("minit %d %f\n", minit->docId, minit->score);  
+  DocNode *next = DocTreeIterator_Next(minit);
+  
+  // do {
+  //   next = DocNode_Next(next);
+  //   if (next && next->score >= it->min && next->score <= it->max) {
+  //     break;
+  //   }
+  // } while (next);
+  
+  if (next && minit->top > 0) {
     heap_offerx(pq, next);
   }
-
-  return minit;
+  ////printf("returning %d\n", minit->docId);
+  return minnode;
 }
 
 void SortedRangeIterator_Free(SortedRangeIterator it) {
+    DocNode *n = SortedRangeIterator_Next(&it);
+    while (n) {
+      n  = SortedRangeIterator_Next(&it);
+    }
+    
     heap_clear(it.pq);
     heap_free(it.pq);
 }
 
-int main(int argc, char **argv) {
-  ScoreNode *root = newScoreNode(newLeaf(newDocNode(0, 0, NULL), 0, 0, 0));
+// int xxxmain(int argc, char **argv) {
+//   ScoreNode *root = newScoreNode(newLeaf(newDocNode(0, 0, NULL), 0, 0, 0));
 
-  float min = 0, max = 10000;
-  int N = 100000;
-  for (int i = 0; i < N; i++) {
-    ScoreNode_Add(root, rand() % (N*10), (float)(rand() % N*2));
-  }
+//   float min = 0, max = 10000;
+//   int N = 100000;
+//   for (int i = 0; i < N; i++) {
+//     ScoreNode_Add(root, rand() % (N*10), (float)(rand() % N*2));
+//   }
   
 
-  int c = 0;
-  int fp = 0;
+//   int c = 0;
+//   int fp = 0;
 
-  struct timespec start_time, end_time;
+//   struct timespec start_time, end_time;
 
   
-  for (int  i =0 ; i < 10; i++) {
-  clock_gettime(CLOCK_REALTIME, &start_time);
+//   for (int  i =0 ; i < 10; i++) {
+//   //clock_gettime(CLOCK_REALTIME, &start_time);
   
-  SortedRangeIterator it = Iterate(root, min, max);
-  DocNode *n;
-  do {
-    n = SortedRangeIterator_Next(&it);
-    if (n) {
-        c++;
-    }
-  } while(n);
+//   SortedRangeIterator it = Iterate(root, min, max);
+//   DocNode *n;
+//   do {
+//     n = SortedRangeIterator_Next(&it);
+//     if (n) {
+//         c++;
+//     }
+//   } while(n);
   
-  clock_gettime(CLOCK_REALTIME, &end_time);
-  long diffInNanos = end_time.tv_nsec - start_time.tv_nsec;
+//   clock_gettime(CLOCK_REALTIME, &end_time);
+//   long diffInNanos = end_time.tv_nsec - start_time.tv_nsec;
 
-  printf("got %d/%d nodes, Time elapsed: %ldnano\n", c, fp, diffInNanos);
-  // printf("got %d nodes\n", c);
-  }
+//   //printf("got %d/%d nodes, Time elapsed: %ldnano\n", c, fp, diffInNanos);
+//   // //printf("got %d nodes\n", c);
+//   }
   
-}
+// }

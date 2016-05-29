@@ -55,113 +55,17 @@ int NumerIndex_Add(NumericIndex *idx, t_docId docId, double score) {
     
 }
 
- int NumericFilter_Read(void *ctx, IndexHit *e) {
-     
-     NumericFilter *f = ctx;
-     if (!NumericFilter_HasNext(ctx) || f->idx->key == NULL){ 
-        return INDEXREAD_EOF;    
-     }
-     
-     if (!f->isRangeLoaded) {
-         return INDEXREAD_OK;
-     }
-     
-     Vector_Get(f->docIds, f->docIdsOffset++, &e->docId);
-     e->flags = 0xFF;
-     e->numOffsetVecs = 0;
-     e->totalFreq = 0;
-     e->type = H_RAW;
-     
-     return INDEXREAD_EOF;
-}
-// Skip to a docid, potentially reading the entry into hit, if the docId matches
-//
-// In this case we don't actually skip to a docId, just check whether it is within our range
-int NumericFilter_SkipTo(void *ctx, u_int32_t docId, IndexHit *hit) {
-    
-    NumericFilter *f = ctx;
-    if (f->idx == NULL || f->idx->key == NULL || !NumericFilter_HasNext(ctx)) {
-        return INDEXREAD_EOF;
-    }
-        
-    // for unloaded ranges - simply check if this docId is in the numeric range
-    if (!f->isRangeLoaded) {
-        double score = 0;
-        f->lastDocid = docId;
-        // See if the filter 
-        RedisModuleString *s = RedisModule_CreateStringFromLongLong(f->idx->ctx->redisCtx, docId);
-        if (RedisModule_ZsetScore(f->idx->key, s, &score) == REDISMODULE_OK) {
-            //RedisModule_FreeString(f->idx->ctx->redisCtx, s);
-            if (numericFilter_Match(f, score)) {
-                
-                hit->docId = docId;
-                hit->flags = 0xFF;
-                hit->numOffsetVecs = 0;
-                hit->totalFreq = 0;
-                hit->type = H_RAW;
-                return INDEXREAD_OK;
-            }
-        } 
-        //RedisModule_FreeString(f->idx->ctx->redisCtx, s);
-        return INDEXREAD_NOTFOUND;;
-    }
-    
-    // if the index was loaded - just advance until we hit or pass the docId
-    // TODO: Can be optimized with binary search
-    while (f->lastDocid < docId && NumericFilter_HasNext(f)) {
-        Vector_Get(f->docIds, f->docIdsOffset++, &f->lastDocid);
-    }
-    
-    if (f->lastDocid == docId) {
-        hit->flags = 0xFF;
-        hit->numOffsetVecs = 0;
-        hit->totalFreq = 0;
-        hit->docId = f->lastDocid;
-        return INDEXREAD_OK;
-    } else if (!NumericFilter_HasNext(f)) {
-        return INDEXREAD_EOF;
-    }
-    return INDEXREAD_NOTFOUND;
-        
-}
-
-// the last docId read
-t_docId NumericFilter_LastDocId(void *ctx) {
-    NumericFilter *f = ctx;
-    return f->lastDocid;
-}
-// can we continue iteration?
-inline int NumericFilter_HasNext(void *ctx) {
-  
-    NumericFilter *f = ctx;
-    
-    if (!f->isRangeLoaded) return 1;
-    
-    return f->docIdsOffset < Vector_Size(f->docIds);
-    
-}
-// release the iterator's context and free everything needed
-void NumericFilter_Free(struct indexIterator *self) {
-    NumericFilter *f = self->ctx;
-    free(f->idx);
-    if (f->docIds) {
-        Vector_Free(f->docIds);
-    }
-    free(f);
-    free(self);
-}
+ 
 
 
-NumericFilter *NewNumericFilter(RedisSearchCtx *ctx, FieldSpec *fs, double min, double max, 
+NumericFilter *NewNumericFilter(double min, double max, 
                                 int inclusiveMin, int inclusiveMax) {
     
     NumericFilter *f = malloc(sizeof(NumericFilter));
-    f->idx = NewNumericIndex(ctx, fs);
     f->min = min;
     f->max = max;
     f->inclusiveMax = inclusiveMax;
     f->inclusiveMin = inclusiveMin;
-    f->lastDocid = 0;
     return f;
 }
 
@@ -172,57 +76,56 @@ int cmp_docId(const void *a, const void *b)
 } 
  
 
-int _numericFilter_LoadRange(NumericFilter *f) {
+int _numericIndex_LoadIndex(NumericIndex *idx) {
     
-    f->docIds = NewVector(t_docId, 1000);
+
+    cachedIndex = newScoreNode(newLeaf(newDocNode(0, 0, NULL), 0, 0, 0));
+    RedisModuleKey *key = idx->key;
+    RedisModuleCtx *ctx = idx->ctx->redisCtx;
+    RedisModule_ZsetFirstInScoreRange(key,REDISMODULE_NEGATIVE_INFINITE, REDISMODULE_POSITIVE_INFINITE,0,0);
     
-    
-    RedisModuleKey *key = f->idx->key;
-    RedisModuleCtx *ctx = f->idx->ctx->redisCtx;
-    RedisModule_ZsetFirstInScoreRange(key, f->minNegInf ? REDISMODULE_NEGATIVE_INFINITE : f->min,
-                                      f->maxInf ? REDISMODULE_POSITIVE_INFINITE : f->max,
-                                      !f->inclusiveMin, !f->inclusiveMax); 
-    
-    int n =0;
     while(!RedisModule_ZsetRangeEndReached(key)) {
-        // abort loading the index if it's over a certain threshold which makes it too expensive
-        // to load
-        if (++n > NUMERICFILTER_LOAD_THRESHOLD) {
-            RedisModule_ZsetRangeStop(key);
-            Vector_Free(f->docIds);
-            f->docIds = NULL;
-            f->isRangeLoaded = 0;
-            return 0;
-        }
-        RedisModuleString *ele = RedisModule_ZsetRangeCurrentElement(key,NULL);
+        
+        double score;
+        RedisModuleString *ele = RedisModule_ZsetRangeCurrentElement(key,&score);
         long long ll;
         RedisModule_StringToLongLong(ele, &ll);
         RedisModule_FreeString(ctx, ele);
-        Vector_Push(f->docIds, (t_docId)ll);
+        //printf("adding %d->%f\n", (t_docId)ll, (float)score);
+        ScoreNode_Add(cachedIndex, (t_docId)ll, (float)score);
         
         RedisModule_ZsetRangeNext(key);
     }
     RedisModule_ZsetRangeStop(key);
-    
-    qsort(f->docIds->data, Vector_Size(f->docIds), sizeof(t_docId), cmp_docId);
-    
-    f->docIdsOffset = 0;
-    f->isRangeLoaded = 1;
-    return Vector_Size(f->docIds);
-
+    return 1;
     
 }
-IndexIterator *NewNumericFilterIterator(NumericFilter *f) {
-    f->docIds = 0;
-    f->lastDocid = 0;
-    _numericFilter_LoadRange(f);
+
+
+NumericIterator *NewNumericIterator(NumericFilter *f, NumericIndex *idx) {
+    
+    NumericIterator *it = malloc(sizeof(NumericIterator));
+    it->filter = f;
+    it->idx = idx;
+    it->lastDocid = 0;
+    it->eof = 0;
+    
+    if (cachedIndex == NULL) {
+        _numericIndex_LoadIndex(idx);
+    }
+    //printf("min %f max %f\n", f->min,f->max);
+    it->it = Iterate(cachedIndex, f->min, f->max);
+    return it;
+}
+
+IndexIterator *NewNumericFilterIterator(NumericIterator *it) {
     IndexIterator *ret = malloc(sizeof(IndexIterator));
-    ret->ctx = f;
-    ret->Free = NumericFilter_Free;
-    ret->HasNext = NumericFilter_HasNext;
-    ret->LastDocId = NumericFilter_LastDocId;
-    ret->Read = NumericFilter_Read;
-    ret->SkipTo = NumericFilter_SkipTo;
+    ret->ctx = it;
+    ret->Free = NumericIterator_Free;
+    ret->HasNext = NumericIterator_HasNext;
+    ret->LastDocId = NumericIterator_LastDocId;
+    ret->Read = NumericIterator_Read;
+    ret->SkipTo = NumericIterator_SkipTo;
     return ret;
 }
 
@@ -246,26 +149,17 @@ NumericFilter *ParseNumericFilter(RedisSearchCtx *ctx, RedisModuleString **argv,
         return NULL;
     }
     // make sure we have an index spec for this filter and it's indeed numeric
-    size_t len;
-    const char *f = RedisModule_StringPtrLen(argv[0], &len);
-    FieldSpec *fs = IndexSpec_GetField( ctx->spec, f, len);
-    if (fs == NULL || fs->type != F_NUMERIC) {
-        return NULL;
-    } 
     
-    NumericIndex *ni = NewNumericIndex(ctx, fs);
+    // NumericIndex *ni = NewNumericIndex(ctx, fs);
     
     NumericFilter *nf = malloc(sizeof(NumericFilter));
-    nf->idx = ni;
     nf->inclusiveMax = 1;
     nf->inclusiveMin = 1;
     nf->min = 0;
     nf->max = 0;
     nf->minNegInf = 0;
     nf->maxInf = 0;
-    nf->docIdsOffset = 0;
-    nf->lastDocid = 0;
-    nf->isRangeLoaded = 0;
+    nf->fieldName = RedisModule_StringPtrLen(argv[0], &nf->fieldNameLen);
     // Parse the min range
     
     // -inf means anything is acceptable as a minimum
@@ -323,8 +217,94 @@ NumericFilter *ParseNumericFilter(RedisSearchCtx *ctx, RedisModuleString **argv,
     
     
 error:
-    free(nf->idx);
     free(nf);
     return NULL;
                                        
+}
+
+int NumericIterator_Read(void *ctx, IndexHit *e) {
+     //printf("read!\n");
+     NumericIterator *it = ctx;
+     if (!NumericIterator_HasNext(it) || it->idx->key == NULL){
+         //printf("cannot read!\n");
+         it->eof = 1;  
+        return INDEXREAD_EOF;    
+     }
+     
+     DocNode *n = SortedRangeIterator_Next(&it->it);
+     if (!n) {
+         it->eof = 1;
+         return INDEXREAD_EOF;
+     }
+
+     e->flags = 0xFF;
+     e->numOffsetVecs = 0;
+     e->totalFreq = 0;
+     e->type = H_RAW;
+     e->docId = n->docId;
+     it->lastDocid = n->docId;
+     
+     return INDEXREAD_OK;
+}
+// Skip to a docid, potentially reading the entry into hit, if the docId matches
+//
+// In this case we don't actually skip to a docId, just check whether it is within our range
+int NumericIterator_SkipTo(void *ctx, u_int32_t docId, IndexHit *hit) {
+    //printf("skipto %d\n", docId);
+    NumericIterator *it = ctx;
+    if (it->idx == NULL || it->idx->key == NULL || !NumericIterator_HasNext(ctx)) {
+        //printf("cannot continue!\n");
+        it->eof = 1;
+        return INDEXREAD_EOF;
+    }
+        
+    
+    // if the index was loaded - just advance until we hit or pass the docId
+    // TODO: Can be optimized with binary search
+    while (it->lastDocid < docId) {
+        
+        DocNode *n = SortedRangeIterator_Next(&it->it);
+        if (!n) {
+            it->eof = 1;
+            return INDEXREAD_EOF;
+        }
+        it->lastDocid = n->docId;
+    }
+    //printf("wanted %d got %d\n",docId, it->lastDocid);
+    if (it->lastDocid == docId) {
+        hit->flags = 0xFF;
+        hit->numOffsetVecs = 0;
+        hit->totalFreq = 0;
+        hit->docId = it->lastDocid;
+        return INDEXREAD_OK;
+    } 
+    
+    return INDEXREAD_NOTFOUND;
+        
+}
+
+// the last docId read
+t_docId NumericIterator_LastDocId(void *ctx) {
+    
+    NumericIterator *f = ctx;
+    //printf("last docId: %d\n", f->lastDocid);
+    return f->lastDocid;
+}
+// can we continue iteration?
+inline int NumericIterator_HasNext(void *ctx) {
+  
+    //printf("has next\n");
+    NumericIterator *f = ctx;
+    
+    return 1;
+    
+    
+}
+// release the iterator's context and free everything needed
+void NumericIterator_Free(struct indexIterator *self) {
+    NumericIterator *f = self->ctx;
+    free(f->idx);
+    free(f->filter);
+    free(f);
+    free(self);
 }

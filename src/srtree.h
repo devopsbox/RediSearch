@@ -16,9 +16,23 @@ typedef struct docNode {
   int size;
   struct docNode *left;
   struct docNode *right;
-  struct docNode *parent;
-  int state;
+  
 } DocNode;
+
+typedef struct {
+  DocNode *current;
+  int state;
+} doctreeIterState;
+
+typedef struct {
+  doctreeIterState *stack;
+  size_t top;
+  size_t cap;
+} DocTreeIterator;
+DocTreeIterator *DocTree_Iterate(DocNode *n);
+void dti_push(DocTreeIterator*dti, DocNode *n);
+DocNode *DocTreeIterator_Next(DocTreeIterator *it);
+
 
 typedef struct leaf {
   DocNode *doctree;
@@ -43,10 +57,8 @@ typedef struct {
 
 
 
-DocNode *DocNode_Next(DocNode *i);
-DocNode *DocNode_Iterate(DocNode *n);
-DocNode *DocNode_Next(DocNode *n);
-DocNode *newDocNode(t_docId docId, float score, DocNode *parent);
+
+DocNode *newDocNode(t_docId docId, float score);
 void DocNode_Add(DocNode *n, t_docId docId, float score);
 void DocNode_Split(DocNode *n, float splitPoint, DocNode **left,
                    DocNode **right);

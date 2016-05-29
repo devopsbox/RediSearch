@@ -3,34 +3,37 @@
 #include "types.h"
 #include "spec.h"
 #include "rmutil/strings.h"
-#include "rmutil/vector.h"
 #include "redismodule.h"
 #include "index.h"
+#include "srtree.h"
 
 typedef struct numericIndex {
     RedisModuleKey *key;
     RedisSearchCtx *ctx;
+    ScoreNode *srtree;
 } NumericIndex;
 
 typedef struct {
-    NumericIndex *idx;
     double min;
     double max;
     int minNegInf;
     int maxInf;
     int inclusiveMin;
     int inclusiveMax;
-    
-    
-    t_docId lastDocid;
-    Vector *docIds;
-    int docIdsOffset;
-    
-    // tells us which strategy was used - loading the range or filtering one by one
-    int isRangeLoaded;    
+    const char *fieldName;
+    size_t fieldNameLen;
 } NumericFilter;
 
-#define NUMERICFILTER_LOAD_THRESHOLD 500
+typedef struct {
+    NumericIndex *idx;   
+    NumericFilter *filter;   
+    t_docId lastDocid;
+    SortedRangeIterator it;
+    int eof;
+} NumericIterator;
+
+
+static ScoreNode *cachedIndex;
 
 NumericIndex *NewNumericIndex(RedisSearchCtx *ctx, FieldSpec *sp);
 
@@ -38,15 +41,17 @@ void NumerIndex_Free(NumericIndex *idx);
 
 int NumerIndex_Add(NumericIndex *idx, t_docId docId, double score);
 
-int NumericFilter_SkipTo(void *ctx, u_int32_t docId, IndexHit *hit);
-int NumericFilter_Read(void *ctx, IndexHit *e);
-int NumericFilter_HasNext(void *ctx);
-t_docId NumericFilter_LastDocId(void *ctx);
+IndexIterator *NewNumericFilterIterator(NumericIterator *it) ;
+NumericIterator *NewNumericIterator(NumericFilter *f, NumericIndex *idx);
 
+int NumericIterator_SkipTo(void *ctx, u_int32_t docId, IndexHit *hit);
+int NumericIterator_Read(void *ctx, IndexHit *e);
+int NumericIterator_HasNext(void *ctx);
+t_docId NumericIterator_LastDocId(void *ctx);
+void NumericIterator_Free(IndexIterator *it);
 
-NumericFilter *NewNumericFilter(RedisSearchCtx *ctx, FieldSpec *fs, double min, double max, int inclusiveMin, int inclusiveMax);
+NumericFilter *NewNumericFilter(double min, double max, int inclusiveMin, int inclusiveMax);
 
-IndexIterator *NewNumericFilterIterator(NumericFilter *f);
 
 NumericFilter *ParseNumericFilter(RedisSearchCtx *ctx, RedisModuleString **argv, int argc);
 

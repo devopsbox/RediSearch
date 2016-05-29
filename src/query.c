@@ -49,7 +49,7 @@ QueryStage *NewLogicStage(QueryOp op) {
   return __newQueryStage(NULL, op, 0);
 }
 
-QueryStage *NewNumericStage(NumericFilter *flt) {
+QueryStage *NewNumericStage(NumericIterator *flt) {
   return __newQueryStage(flt, Q_NUMERIC, 0);
 }
 
@@ -88,9 +88,9 @@ IndexIterator *query_EvalIntersectStage(Query *q, QueryStage *stage) {
 
 IndexIterator *query_EvalNumericStage(Query *q, QueryStage *stage) {
     
-    NumericFilter *nf = stage->value;
-    
-    return NewNumericFilterIterator(nf);
+    NumericIterator *it = stage->value;
+    //printf("got numeric filter %p\n", it);
+    return NewNumericFilterIterator(it);
 }
 
 IndexIterator *query_EvalUnionStage(Query *q, QueryStage *stage) {

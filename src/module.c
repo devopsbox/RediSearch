@@ -280,16 +280,26 @@ int SearchCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     
     RedisSearchCtx sctx = {ctx, &sp};
     
-    NumericFilter *nf = NULL;
+    NumericIterator *nfi = NULL;
     int filterIdx = RMUtil_ArgExists("FILTER", argv,argc, 3);
     if (filterIdx > 0 && filterIdx + 4 <= argc) {
-        nf = ParseNumericFilter(&sctx, &argv[filterIdx+1], 3);
+        NumericFilter *nf = ParseNumericFilter(&sctx, &argv[filterIdx+1], 3);
         if (nf == NULL) {
-            
             RedisModule_ReplyWithError(ctx, "Invalid numeric filter");
             goto end;
-            
         }
+        FieldSpec *fsp = IndexSpec_GetField(&sp, nf->fieldName, nf->fieldNameLen);
+        if (fsp == NULL) {
+            free(nf);
+            RedisModule_ReplyWithError(ctx, "Invalid numeric filter");
+            goto end;
+        }
+        
+        NumericIndex *ni = NewNumericIndex(&sctx, fsp);
+
+        nfi = NewNumericIterator(nf, ni);  
+                      
+        
     }
     
     
@@ -301,8 +311,8 @@ int SearchCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     Query *q = NewQuery(&sctx, (char *)qs, len, first, limit, fieldMask);
     Query_Tokenize(q);
     
-    if (nf != NULL) {
-        QueryStage_AddChild(q->root, NewNumericStage(nf));
+    if (nfi != NULL) {
+        QueryStage_AddChild(q->root, NewNumericStage(nfi));
     }
     q->docTable = &dt;
 
