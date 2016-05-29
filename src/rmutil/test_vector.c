@@ -13,6 +13,7 @@ int main(int argc, char **argv) {
         Vector_Push(v, i);    
     }
     
+    
     for (int i = 0; i < Vector_Size(v); i++) {
         int n;
         int rc = Vector_Get(v, i, &n);
