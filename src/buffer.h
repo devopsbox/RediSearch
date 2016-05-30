@@ -1,5 +1,5 @@
-#ifndef __BUFFER_H__
-#define __BUFFER_H__
+#ifndef __RS_BUFFER_H__
+#define __RS_BUFFER_H__
 
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +37,7 @@ inline int BufferAtEnd(Buffer *ctx) {
     return ctx->offset >= ctx->cap;
 }
 
-typedef struct {
+typedef struct bufferWriter {
     Buffer *buf;    
     size_t (*Write)(Buffer *ctx, void *data, size_t len);
     size_t (*Truncate)(Buffer *ctx, size_t newlen);

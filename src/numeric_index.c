@@ -79,7 +79,7 @@ int cmp_docId(const void *a, const void *b)
 int _numericIndex_LoadIndex(NumericIndex *idx) {
     
 
-    cachedIndex = newScoreNode(newLeaf(newDocNode(0, 0, NULL), 0, 0, 0));
+    cachedIndex = newScoreNode(newLeaf(newDocNode(0, 0), 0, 0, 0));
     RedisModuleKey *key = idx->key;
     RedisModuleCtx *ctx = idx->ctx->redisCtx;
     RedisModule_ZsetFirstInScoreRange(key,REDISMODULE_NEGATIVE_INFINITE, REDISMODULE_POSITIVE_INFINITE,0,0);
@@ -114,7 +114,8 @@ NumericIterator *NewNumericIterator(NumericFilter *f, NumericIndex *idx) {
         _numericIndex_LoadIndex(idx);
     }
     //printf("min %f max %f\n", f->min,f->max);
-    it->it = Iterate(cachedIndex, f->min, f->max);
+    __numericIterator_start(it, cachedIndex);
+    //it->it = Iterate(cachedIndex, f->min, f->max);
     return it;
 }
 
@@ -231,7 +232,7 @@ int NumericIterator_Read(void *ctx, IndexHit *e) {
         return INDEXREAD_EOF;    
      }
      
-     DocNode *n = SortedRangeIterator_Next(&it->it);
+     DocNode *n = __numericIterator_Next(it);
      if (!n) {
          it->eof = 1;
          return INDEXREAD_EOF;
@@ -263,7 +264,7 @@ int NumericIterator_SkipTo(void *ctx, u_int32_t docId, IndexHit *hit) {
     // TODO: Can be optimized with binary search
     while (it->lastDocid < docId) {
         
-        DocNode *n = SortedRangeIterator_Next(&it->it);
+        DocNode *n = __numericIterator_Next(it);
         if (!n) {
             it->eof = 1;
             return INDEXREAD_EOF;
@@ -303,8 +304,94 @@ inline int NumericIterator_HasNext(void *ctx) {
 // release the iterator's context and free everything needed
 void NumericIterator_Free(struct indexIterator *self) {
     NumericIterator *f = self->ctx;
+    // if there are items on the heap - release them. 
+    // this is done in an ugly way to avoid performance overhead
+    // of popping items according to order (it does really affect performance!) 
+    int n  =  heap_count(f->pq);
+    if (n > 0) {
+        int offset = heap_sizeof(n) - n*sizeof(void*);
+        for (int i = 0; i < heap_count(f->pq); i++) {
+            DocTreeIterator **it = (DocTreeIterator**)((void*)f->pq + offset + i*sizeof(void*));
+            free((*it)->stack);
+            free(*it);
+        } 
+    }
+    
+    heap_free(f->pq);
     free(f->idx);
     free(f->filter);
     free(f);
     free(self);
+}
+
+
+
+static int cmpDocIds(const void *e1, const void *e2, const void *udata) {
+  const DocTreeIterator *d1 = e1, *d2 = e2;
+  
+  DocNode *n1 = DocTreeIterator_Current((DocTreeIterator *)d1);
+  DocNode *n2 = DocTreeIterator_Current((DocTreeIterator *)d2);
+  
+  return n1->docId - n2->docId;
+  
+}
+
+void __numericIterator_start(NumericIterator *it, ScoreNode *root) {
+  
+  Vector *leaves = ScoreNode_FindRange(root, it->filter->min, it->filter->max);
+  size_t n = Vector_Size(leaves);
+
+  it->pq = malloc(heap_sizeof(n));
+  heap_init(it->pq, cmpDocIds, NULL, n);
+
+  
+  for (size_t i = 0; i < n; i++) {
+    Leaf *l;
+    if (Vector_Get(leaves, i, &l)) {
+      //printf("found leaf %f...%f", l->min, l->max);
+      DocTreeIterator *dti = DocTree_Iterate(l->doctree);
+      if (dti) {
+//        printf("adding it @%p\n", it);
+        heap_offerx(it->pq,dti);
+      }
+    }
+  }
+  
+  Vector_Free(leaves);
+  
+}
+
+DocNode *__numericIterator_Next(NumericIterator *it) {
+  //printf("@Next!n\n");
+  heap_t *pq = it->pq;
+  if (heap_count(pq) == 0) {
+    //  printf("heap empty");
+    return NULL;
+  }
+  DocTreeIterator *minit = heap_poll(pq);
+  if (minit == NULL) {
+    //printf("no min!\n");
+    return NULL;
+  }
+  
+  DocNode *minnode = DocTreeIterator_Current(minit);
+  //printf("minit %d %f\n", minit->docId, minit->score);  
+  DocNode *next = DocTreeIterator_Next(minit);
+  
+  while (next) {
+     
+     if (next && numericFilter_Match(it->filter, next->score)) {
+       break;
+     }
+     next = DocTreeIterator_Next(minit);
+  } 
+  
+  if (next) {
+    heap_offerx(pq, minit);
+  } else {
+    free(minit->stack);
+    free(minit);
+  }
+  ////printf("returning %d\n", minit->docId);
+  return minnode;
 }

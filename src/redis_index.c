@@ -4,6 +4,7 @@
 #include "doc_table.h"
 #include "rmutil/util.h"
 #include "rmutil/strings.h"
+#include "buffer.h"
 
 /**
 * Format redis key for a term.
@@ -12,9 +13,9 @@
 RedisModuleString *fmtRedisTermKey(RedisSearchCtx *ctx, const char *term) {
   
   return RMUtil_CreateFormattedString(ctx->redisCtx, TERM_KEY_FORMAT, ctx->spec->name, term);
+  
 
 }
-
 
 RedisModuleString *fmtRedisSkipIndexKey(RedisSearchCtx *ctx, const char *term) {
   
@@ -25,13 +26,15 @@ RedisModuleString *fmtRedisScoreIndexKey(RedisSearchCtx *ctx, const char *term) 
   
   return RMUtil_CreateFormattedString(ctx->redisCtx, SCOREINDEX_KEY_FORMAT, ctx->spec->name, term);
 }
+
+
 /**
 * Open a redis index writer on a redis key
 */
 IndexWriter *Redis_OpenWriter(RedisSearchCtx *ctx, const char *term) {
-  
   // Open the index writer
   RedisModuleString *termKey = fmtRedisTermKey(ctx, term);
+  
   BufferWriter bw = NewRedisWriter(ctx->redisCtx, termKey);
   //RedisModule_FreeString(ctx->redisCtx, termKey);
   // Open the skip index writer
@@ -119,6 +122,7 @@ void Redis_CloseReader(IndexReader *r) {
   }
   if (r->scoreIndex!=NULL) {
     ScoreIndex_Free(r->scoreIndex);
+
   }
   free(r);
 }

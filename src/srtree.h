@@ -8,7 +8,7 @@
 #include "rmutil/vector.h"
 #include "util/heap.h"
 
-#define SR_MAX_LEAF_SIZE 500  
+#define SR_MAX_LEAF_SIZE 1000  
 
 typedef struct docNode {
   t_docId docId;
@@ -49,12 +49,6 @@ typedef struct scoreNode {
   Leaf *leaf;
 } ScoreNode;
 
-typedef struct {
-   heap_t *pq;
-   float min;
-   float max;
-} SortedRangeIterator;
-
 
 
 
@@ -77,9 +71,9 @@ ScoreNode *newScoreNode(Leaf *l);
 void ScoreNode_Add(ScoreNode *n, t_docId docId, float score);
 Vector *ScoreNode_FindRange(ScoreNode *n, float min, float max); 
 static int cmpDocIds(const void *e1, const void *e2, const void *udata);
-SortedRangeIterator Iterate(ScoreNode *root, float min, float max); 
-DocNode *SortedRangeIterator_Next(SortedRangeIterator *it);
+//SortedRangeIterator Iterate(ScoreNode *root, float min, float max); 
+//DocNode *SortedRangeIterator_Next(SortedRangeIterator *it);
 
-void SortedRangeIterator_Free(SortedRangeIterator it);
+//void SortedRangeIterator_Free(SortedRangeIterator it);
 
 #endif

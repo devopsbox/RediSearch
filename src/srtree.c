@@ -13,7 +13,7 @@ DocTreeIterator *DocTree_Iterate(DocNode *n) {
 }
 
 void dti_push(DocTreeIterator*dti, DocNode *n) {
-  if (dti->top >= dti->cap) {
+  if (dti->top == dti->cap) {
     dti->cap *= 2;
     dti->stack = realloc(dti->stack, dti->cap*sizeof(doctreeIterState));
   }
@@ -22,11 +22,32 @@ void dti_push(DocTreeIterator*dti, DocNode *n) {
   dti->top++;
    
 }
+
+void DocNode_Visit(DocNode *n, void (*Callback)(DocNode*, void *), void* ctx) {
+  
+  if (n->left) {
+    DocNode_Visit(n->left, Callback, ctx);
+  }
+  
+  DocNode *right = n->right;
+  Callback(n, ctx);
+  if (right)
+    DocNode_Visit(right, Callback, ctx);
+  
+}
+
+DocNode *DocTreeIterator_Current(DocTreeIterator *it) {
+  if (it->top < 1) {
+    return NULL;
+  }
+  return it->stack[it->top-1].current;
+}
 DocNode *DocTreeIterator_Next(DocTreeIterator *it) {
+   
    if (it->top == 0) return NULL;
    
    doctreeIterState *st = &it->stack[it->top-1];
-   printf("next %p, top %d cap %d\n",it, it->top, it->cap);
+   //printf("next %p, top %d cap %d\n",it, it->top, it->cap);
    switch (st->state) {
      case 0: {
       st->state++;
@@ -48,9 +69,10 @@ DocNode *DocTreeIterator_Next(DocTreeIterator *it) {
       
      case 3: 
       // pop
-      it->top--;
-      return DocTreeIterator_Next(it);
-            
+      if (it->top > 0) {
+        it->top--;
+        return DocTreeIterator_Next(it);
+      } 
    }
    
    return NULL;
@@ -94,6 +116,10 @@ void DocNode_Add(DocNode *n, t_docId docId, float score) {
   }
 }
 
+
+void freeCallback(DocNode *n, void *ctx) {
+  free(n);
+}
 void DocNode_Split(DocNode *n, float splitPoint, DocNode **left,
                    DocNode **right) {
   DocTreeIterator *it = DocTree_Iterate(n);
@@ -119,6 +145,7 @@ void DocNode_Split(DocNode *n, float splitPoint, DocNode **left,
     current = DocTreeIterator_Next(it);
   };
   
+  DocNode_Visit(n, freeCallback, NULL);
   free(it->stack);
   free(it);
   
@@ -241,81 +268,12 @@ Vector *ScoreNode_FindRange(ScoreNode *n, float min, float max) {
   return leaves;
 }
 
-
-static int cmpDocIds(const void *e1, const void *e2, const void *udata) {
-  const DocTreeIterator *d1 = e1, *d2 = e2;
-
-  return d1->stack[d1->top-1].current->docId - d2->stack[d2->top-1].current->docId;
-  
-}
-
-SortedRangeIterator Iterate(ScoreNode *root, float min, float max) {
-  
-  Vector *leaves = ScoreNode_FindRange(root, min, max);
-  size_t n = Vector_Size(leaves);
-
-  heap_t *pq = malloc(heap_sizeof(n));
-  heap_init(pq, cmpDocIds, NULL, n);
-
-  Leaf *l;
-  for (size_t i = 0; i < n; i++) {
-    Vector_Get(leaves, i, &l);
-    //printf("found leaf %f...%f", l->min, l->max);
-    DocTreeIterator *it = DocTree_Iterate(l->doctree);
-    if (it) {
-      //printf("adding it @%d\n", it->docId);
-      heap_offer(&pq, it);
-    }
-  }
-  
-  Vector_Free(leaves);
-  SortedRangeIterator ret;
-  ret.max = max;
-  ret.min = min;
-  ret.pq = pq;
-  return ret;
-}
-
-DocNode *SortedRangeIterator_Next(SortedRangeIterator *it) {
-  //printf("@Next!n\n");
-  heap_t *pq = it->pq;
-  if (heap_count(pq) == 0) {
-    printf("heap empty");
-    return NULL;
-  }
-  DocTreeIterator *minit = heap_poll(pq);
-  if (minit == NULL|| heap_count(pq) == 0) {
-    //printf("no min!\n");
-    return NULL;
-  }
-  
-  DocNode *minnode = minit->stack[minit->top-1].current;
-  //printf("minit %d %f\n", minit->docId, minit->score);  
-  DocNode *next = DocTreeIterator_Next(minit);
-  
-  // do {
-  //   next = DocNode_Next(next);
-  //   if (next && next->score >= it->min && next->score <= it->max) {
-  //     break;
-  //   }
-  // } while (next);
-  
-  if (next && minit->top > 0) {
-    heap_offerx(pq, next);
-  }
-  ////printf("returning %d\n", minit->docId);
-  return minnode;
-}
-
-void SortedRangeIterator_Free(SortedRangeIterator it) {
-    DocNode *n = SortedRangeIterator_Next(&it);
-    while (n) {
-      n  = SortedRangeIterator_Next(&it);
-    }
+// void SortedRangeIterator_Free(SortedRangeIterator it) {
+   
     
-    heap_clear(it.pq);
-    heap_free(it.pq);
-}
+//     heap_clear(it.pq);
+//     heap_free(it.pq);
+// }
 
 // int xxxmain(int argc, char **argv) {
 //   ScoreNode *root = newScoreNode(newLeaf(newDocNode(0, 0, NULL), 0, 0, 0));
